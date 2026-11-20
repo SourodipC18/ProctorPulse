@@ -1,0 +1,441 @@
+import { alertThreshold, BehaviorTracker } from './behavior.js';
+import { loadFaceEngine } from './face-engine.js';
+
+const byId = (id) => document.getElementById(id);
+const video = byId('camera');
+const overlay = byId('overlay');
+const context = overlay.getContext('2d');
+const startButton = byId('start');
+const downloadButton = byId('download');
+
+const faceInterval = 100;
+const objectInterval = 200;
+const objectMaximumGap = 2200;
+const faceMaximumGap = 750;
+
+let session = null;
+let recording = null;
+
+startButton.addEventListener('click', () => {
+  if (session) void stopSession(session);
+  else void startSession();
+});
+downloadButton.addEventListener('click', downloadRecording);
+window.addEventListener('pagehide', () => {
+  if (session) void stopSession(session);
+});
+
+document.addEventListener('visibilitychange', () => {
+  const current = session;
+  if (!isActive(current)) return;
+  current.tracker.clear('face');
+  current.tracker.clear('objects');
+  current.lastFace = null;
+  current.lastObjects = null;
+  current.visibleSince = performance.now();
+  clearOverlay();
+  render(current, current.visibleSince);
+  log(current, document.hidden ? 'Monitoring paused while the tab is hidden' : 'Monitoring resumed');
+});
+
+async function startSession() {
+  showError('');
+  const current = {
+    state: 'starting',
+    startedAt: performance.now(),
+    tracker: new BehaviorTracker(),
+    visibleSince: performance.now(),
+    lastVideoTime: -1,
+    lastFaceAt: -Infinity,
+    lastObjectRequest: -Infinity,
+    flagCount: 0,
+    activeFlags: new Set(),
+  };
+  session = current;
+  byId('events').replaceChildren();
+  byId('log-empty').hidden = false;
+  byId('flag-count').textContent = '0 flags';
+  byId('elapsed').textContent = '00:00';
+  byId('score').textContent = '0';
+  setPhase('loading', 'Requesting camera');
+  byId('camera-status').textContent = 'Waiting for camera permission';
+  byId('empty-title').textContent = 'Waiting for camera access';
+  byId('empty-description').textContent = 'Allow camera access in your browser to continue.';
+  byId('assessment').textContent = 'Starting';
+  startButton.textContent = 'Cancel';
+  downloadButton.disabled = true;
+
+  try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Camera access requires a supported browser and a secure connection.');
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+    });
+    if (session !== current) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+    current.stream = stream;
+    for (const track of stream.getVideoTracks()) {
+      track.addEventListener('ended', () => void stopSession(current, 'The camera disconnected or access was revoked.'));
+    }
+    video.srcObject = stream;
+    await deadline(video.play(), 15_000, 'The camera did not start in time.');
+    if (session !== current) return;
+
+    video.hidden = false;
+    overlay.hidden = false;
+    byId('empty').hidden = true;
+    setPhase('loading', 'Loading detectors');
+    byId('camera-status').textContent = 'Loading face and object models';
+    const [face, provider] = await deadline(Promise.all([loadFaceEngine(), loadObjectEngine(current)]),
+      90_000, 'Model loading timed out. Check your connection and try again.');
+    if (session !== current || current.state !== 'starting') return;
+
+    current.face = face;
+    current.provider = provider;
+    current.startedAt = performance.now();
+    current.visibleSince = current.startedAt;
+    current.state = 'active';
+    recording = null;
+    setPhase('active', 'Session active');
+    startButton.textContent = 'End session';
+    startButton.classList.add('stop');
+    log(current, 'Session started');
+    startRecording(current);
+    render(current, performance.now());
+    current.requestFrame = requestAnimationFrame((now) => processFrame(current, now));
+  } catch (error) {
+    if (session === current && current.state !== 'stopping') {
+      await stopSession(current, describeError(error));
+    }
+  }
+}
+
+function loadObjectEngine(current) {
+  return new Promise((resolve, reject) => {
+    current.cancelWorkerLoad = () => reject(new Error('Session closed.'));
+    const worker = new Worker('/object-engine.js', { type: 'module' });
+    current.worker = worker;
+    const failed = (message) => {
+      if (isActive(current)) void stopSession(current, `Object detection stopped. ${message}`);
+      else reject(new Error(message));
+    };
+    worker.onerror = (event) => failed(event.message || 'The object detector could not start.');
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'ready') {
+        current.cancelWorkerLoad = null;
+        resolve(data.provider);
+      } else if (data.type === 'failure') {
+        failed(data.message || 'The object detector could not analyze a frame.');
+      } else if (data.type === 'detections') {
+        current.waitingForObjects = false;
+        if (!isActive(current) || document.hidden || data.timestamp < current.visibleSince) return;
+        acceptObjects(current, data.detections, data.timestamp);
+      }
+    };
+    worker.postMessage({ type: 'load' });
+  });
+}
+
+function processFrame(current, now) {
+  if (!isActive(current)) return;
+  try {
+    if (!document.hidden && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+      if (current.waitingForObjects && now - current.lastObjectRequest > 15_000) {
+        throw new Error('Object detection stopped responding. Start a new session to retry.');
+      }
+      if (video.currentTime !== current.lastVideoTime) {
+        current.lastVideoTime = video.currentTime;
+        if (now - current.lastFaceAt >= faceInterval) {
+          current.lastFaceAt = now;
+          const observation = current.face(video, now);
+          current.lastFace = { ...observation, time: now };
+          current.tracker.update('face', {
+            away: Boolean(observation.head && observation.head !== 'Center'),
+            mouth: observation.mouthOpen === true,
+          }, now, faceMaximumGap);
+        }
+        if (!current.waitingForObjects && now - current.lastObjectRequest >= objectInterval) {
+          void sendFrame(current, now);
+        }
+      }
+      if (current.lastObjects && now - current.lastObjects.time > objectMaximumGap) {
+        current.lastObjects = null;
+        clearOverlay();
+      }
+    }
+    if (now - (current.lastRender ?? -Infinity) >= 100) {
+      current.lastRender = now;
+      render(current, now);
+    }
+  } catch (error) {
+    void stopSession(current, describeError(error));
+    return;
+  }
+  current.requestFrame = requestAnimationFrame((time) => processFrame(current, time));
+}
+
+async function sendFrame(current, timestamp) {
+  current.waitingForObjects = true;
+  current.lastObjectRequest = timestamp;
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(video);
+    if (!isActive(current) || document.hidden || timestamp < current.visibleSince) {
+      current.waitingForObjects = false;
+      return;
+    }
+    current.worker.postMessage({ type: 'frame', bitmap, timestamp }, [bitmap]);
+    bitmap = null;
+  } catch (error) {
+    if (isActive(current)) void stopSession(current, describeError(error));
+  } finally {
+    bitmap?.close();
+  }
+}
+
+function acceptObjects(current, detections, time) {
+  const people = detections.filter(({ classId }) => classId === 0).length;
+  const phone = detections.some(({ classId }) => classId === 67);
+  current.lastObjects = { people, phone, time };
+  current.tracker.update('objects', { multiple: people > 1, absent: people === 0, phone },
+    time, objectMaximumGap);
+  drawBoxes(detections);
+  render(current, performance.now());
+}
+
+function drawBoxes(detections) {
+  const width = video.videoWidth;
+  const height = video.videoHeight;
+  if (overlay.width !== width || overlay.height !== height) {
+    overlay.width = width;
+    overlay.height = height;
+  }
+  clearOverlay();
+  const unit = Math.max(1, width / 600);
+  context.lineWidth = 2 * unit;
+  context.font = `600 ${14 * unit}px system-ui`;
+  context.textBaseline = 'middle';
+  for (const box of detections) {
+    const isPerson = box.classId === 0;
+    const color = isPerson ? '#bbfc9e' : '#ffd091';
+    const label = isPerson ? 'Person' : 'Phone';
+    const x = width * (1 - box.right);
+    const y = height * box.top;
+    const labelHeight = 22 * unit;
+    const labelY = y > labelHeight ? y - labelHeight : y;
+    context.strokeStyle = color;
+    context.strokeRect(x, y, width * (box.right - box.left), height * (box.bottom - box.top));
+    context.fillStyle = color;
+    context.fillRect(x, labelY, context.measureText(label).width + 12 * unit, labelHeight);
+    context.fillStyle = '#14231a';
+    context.fillText(label, x + 6 * unit, labelY + labelHeight / 2);
+  }
+}
+
+function clearOverlay() {
+  context.clearRect(0, 0, overlay.width, overlay.height);
+}
+
+function render(current, now) {
+  const paused = document.hidden;
+  const face = current.lastFace && now - current.lastFace.time <= faceMaximumGap ? current.lastFace : null;
+  const objects = current.lastObjects && now - current.lastObjects.time <= objectMaximumGap ? current.lastObjects : null;
+  const { seconds, score, flags } = current.tracker.read(now);
+  const alert = score >= alertThreshold;
+  const activeKeys = new Set(flags.map(({ key }) => key));
+  for (const flag of flags) {
+    if (!current.activeFlags.has(flag.key)) log(current, flag.reason, flag.points);
+  }
+  current.activeFlags = activeKeys;
+
+  const alertBox = byId('alert');
+  alertBox.hidden = !alert;
+  if (alert) setText(alertBox, `Review flagged · ${flags.map(({ reason }) => reason).join(' · ')}`);
+  setText(byId('score'), String(score));
+  setText(byId('elapsed'), formatTime((now - current.startedAt) / 1000));
+  setText(byId('camera-status'), paused ? 'Monitoring paused while the tab is hidden' :
+    `Analyzing locally · ${current.provider}`);
+  const ready = face && objects;
+  signal('assessment', paused ? 'Paused' : alert ? 'Review flagged' : ready ? 'Monitoring' : 'Sampling',
+    alert ? 'warn' : ready && !paused ? 'good' : 'neutral');
+  const waiting = paused ? 'Paused' : 'Sampling';
+  signal('people', objects ? String(objects.people) : waiting,
+    objects ? objects.people === 1 ? 'good' : 'warn' : 'neutral');
+  signal('phone', objects ? objects.phone ? withDuration('Visible', seconds.phone) : 'Clear' : waiting,
+    objects ? objects.phone ? 'warn' : 'good' : 'neutral');
+  signal('head', face?.head ? withDuration(face.head, seconds.away) : face ? 'Face missing' : waiting,
+    face?.head ? face.head === 'Center' ? 'good' : 'warn' : 'neutral');
+  signal('mouth', face?.mouthOpen === true ? withDuration('Open', seconds.mouth) :
+    face?.mouthOpen === false ? 'Closed' : face ? 'Face missing' : waiting,
+    face?.mouthOpen === true ? 'warn' : face?.mouthOpen === false ? 'good' : 'neutral');
+}
+
+function startRecording(current) {
+  if (typeof MediaRecorder === 'undefined') {
+    log(current, 'Recording is unavailable in this browser');
+    return;
+  }
+  const formats = ['video/mp4;codecs=avc1.42001e', 'video/mp4', 'video/webm;codecs=vp8', 'video/webm'];
+  let recorder;
+  for (const mimeType of [...formats.filter((type) => MediaRecorder.isTypeSupported(type)), '']) {
+    try {
+      recorder = mimeType ? new MediaRecorder(current.stream, { mimeType }) : new MediaRecorder(current.stream);
+      const chunks = [];
+      current.recordingDone = new Promise((resolve) => {
+        recorder.addEventListener('dataavailable', ({ data }) => {
+          if (data.size) chunks.push(data);
+        });
+        recorder.addEventListener('stop', () => {
+          const type = recorder.mimeType || chunks[0]?.type || '';
+          resolve(chunks.length ? new Blob(chunks, { type }) : null);
+        }, { once: true });
+        recorder.addEventListener('error', () => {
+          log(current, 'Recording failed');
+          byId('recording').hidden = true;
+          resolve(null);
+        }, { once: true });
+      });
+      recorder.start(2000);
+      current.recorder = recorder;
+      byId('recording').hidden = false;
+      return;
+    } catch {
+      current.recordingDone = null;
+    }
+  }
+  log(current, 'Recording could not start');
+}
+
+async function stopSession(current, error = '') {
+  if (session !== current || current.state === 'stopping') return;
+  const wasActive = isActive(current);
+  current.state = 'stopping';
+  startButton.disabled = true;
+  startButton.textContent = 'Ending…';
+  current.cancelWorkerLoad?.();
+  current.worker?.terminate();
+  cancelAnimationFrame(current.requestFrame);
+  if (current.recorder && current.recorder.state !== 'inactive') current.recorder.stop();
+  current.stream?.getTracks().forEach((track) => track.stop());
+  video.srcObject = null;
+  video.hidden = true;
+  overlay.hidden = true;
+  clearOverlay();
+  byId('recording').hidden = true;
+  byId('alert').hidden = true;
+  byId('empty').hidden = false;
+  byId('empty-title').textContent = wasActive ? 'Session ended' : 'Camera is off';
+  byId('empty-description').textContent = 'Start a session and allow camera access.';
+  byId('camera-status').textContent = 'Camera idle';
+  for (const id of ['people', 'phone', 'head', 'mouth']) signal(id, 'Waiting', 'neutral');
+  signal('assessment', wasActive ? 'Session ended' : 'Standby', 'neutral');
+  if (wasActive) log(current, 'Session ended');
+  if (error) showError(error);
+
+  if (current.recordingDone) {
+    recording = await deadline(current.recordingDone, 5000, 'Recording could not be finalized.').catch(() => null);
+    if (recording) log(current, 'Recording ready to download');
+    else log(current, 'No recording was saved');
+  }
+  session = null;
+  setPhase('idle', 'Session offline');
+  startButton.disabled = false;
+  startButton.textContent = 'Start session';
+  startButton.classList.remove('stop');
+  downloadButton.disabled = !recording;
+}
+
+function isActive(current) {
+  return current && session === current && current.state === 'active';
+}
+
+function downloadRecording() {
+  if (!recording) return;
+  const extension = recording.type.includes('mp4') ? 'mp4' : recording.type.includes('webm') ? 'webm' : 'video';
+  const url = URL.createObjectURL(recording);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `proctorpulse-session.${extension}`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 15_000);
+}
+
+function setText(node, value) {
+  if (node.textContent !== value) node.textContent = value;
+}
+
+function signal(id, text, state) {
+  const node = byId(id);
+  setText(node, text);
+  const className = `signal ${state}`;
+  if (node.className !== className) node.className = className;
+}
+
+function setPhase(state, text) {
+  const element = byId('session-state');
+  element.dataset.state = state;
+  element.querySelector('b').textContent = text;
+}
+
+function showError(text) {
+  const element = byId('error');
+  element.textContent = text;
+  element.hidden = !text;
+}
+
+function describeError(error) {
+  switch (error.name) {
+    case 'NotAllowedError':
+      return 'Camera permission was denied. Allow camera access in your browser settings and try again.';
+    case 'NotFoundError':
+      return 'No camera was found. Connect a camera and try again.';
+    case 'NotReadableError':
+      return 'The camera could not be opened. Check whether another app is using it.';
+    default:
+      return error.message || 'The session could not continue.';
+  }
+}
+
+function log(current, label, points) {
+  const timestamp = Math.max(0, (performance.now() - current.startedAt) / 1000);
+  const item = document.createElement('li');
+  const time = document.createElement('time');
+  time.className = 'mono';
+  time.textContent = formatTime(timestamp);
+  const title = document.createElement('span');
+  title.textContent = label;
+  const status = document.createElement('span');
+  status.className = points ? 'flag mono' : 'neutral';
+  status.textContent = points ? `+${points} pts` : '';
+  item.append(time, title, status);
+  byId('log-empty').hidden = true;
+  byId('events').prepend(item);
+  if (byId('events').childElementCount > 150) byId('events').lastElementChild.remove();
+  if (points) {
+    current.flagCount++;
+    setText(byId('flag-count'), `${current.flagCount} ${current.flagCount === 1 ? 'flag' : 'flags'}`);
+  }
+}
+
+function formatTime(seconds) {
+  const total = Math.floor(Math.max(0, seconds));
+  const pad = (value) => String(value).padStart(2, '0');
+  const minutesSeconds = `${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`;
+  return total >= 3600 ? `${pad(Math.floor(total / 3600))}:${minutesSeconds}` : minutesSeconds;
+}
+
+function withDuration(text, seconds) {
+  return seconds >= 0.1 ? `${text} · ${seconds.toFixed(1)} s` : text;
+}
+
+function deadline(task, milliseconds, message) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), milliseconds);
+  });
+  return Promise.race([task, timeout]).finally(() => clearTimeout(timer));
+}

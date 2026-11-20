@@ -1,0 +1,19 @@
+ProctorPulse uses the following upstream components and model assets.
+
+Ultralytics YOLO11n, COCO detection model, official v8.4.0 ONNX export
+Copyright Ultralytics. Distributed under AGPL-3.0.
+Model: https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.onnx
+Source, training configuration and export tools: https://github.com/ultralytics/ultralytics/tree/v8.3.237
+Original checkpoint: https://github.com/ultralytics/assets/releases/download/v8.4.0/yolo11n.pt
+Terms and model license: https://www.ultralytics.com/license
+
+MediaPipe Tasks Vision and Face Landmarker
+Copyright Google LLC. MediaPipe Tasks Vision is licensed under Apache-2.0.
+Source: https://github.com/google-ai-edge/mediapipe
+Model: https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+
+ONNX Runtime Web
+Copyright Microsoft Corporation. Licensed under the MIT License.
+Source and third-party notices: https://github.com/microsoft/onnxruntime/tree/v1.24.3
+
+ProctorPulse source: https://github.com/SourodipC18/ProctorPulse

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="ProctorPulse checks a live webcam feed for exam review signals. Video processing takes place on your device.">
+  <meta name="theme-color" content="#111a22">
+  <title>ProctorPulse · Live proctoring</title>
+  <link rel="icon" href="/favicon.png" type="image/png">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="module" src="/session.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="shell top-inner">
+      <a class="brand" href="/" aria-label="ProctorPulse home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>Proctor<span>Pulse</span></a>
+      <span id="session-state" class="session-state" data-state="idle"><span aria-hidden="true"></span><b>Session offline</b></span>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="intro">
+      <div>
+        <h1>Live proctoring</h1>
+        <p>Monitor exam signals and record a webcam session on this device.</p>
+      </div>
+      <div class="actions">
+        <button class="secondary" id="download" type="button" disabled>Download recording</button>
+        <button class="primary" id="start" type="button">Start session</button>
+      </div>
+    </div>
+    <div id="error" class="message error" role="alert" hidden></div>
+    <div id="alert" class="message warning" role="alert" hidden></div>
+    <div class="workspace">
+      <section class="panel feed-panel" aria-labelledby="feed-title">
+        <div class="section-header">
+          <h2 id="feed-title">Camera feed</h2>
+          <span class="mono timer" id="elapsed">00:00</span>
+        </div>
+        <div class="viewport" id="viewport">
+          <video id="camera" autoplay muted playsinline hidden aria-label="Live view of your webcam"></video>
+          <canvas id="overlay" aria-hidden="true" hidden></canvas>
+          <div class="empty" id="empty">
+            <span class="camera-symbol" aria-hidden="true"></span>
+            <h3 id="empty-title">Camera is off</h3>
+            <p id="empty-description">Start a session and allow camera access.</p>
+          </div>
+          <span class="record-indicator" id="recording" hidden><span aria-hidden="true"></span> REC</span>
+        </div>
+        <div class="feed-footer"><span id="camera-status" role="status">Camera idle</span><span>Video stays on this device</span></div>
+      </section>
+      <section class="panel signals" aria-labelledby="signals-title">
+        <div class="section-header">
+          <h2 id="signals-title">Live signals</h2>
+          <span class="mono threshold">Alert at 3 pts</span>
+        </div>
+        <div class="score-wrap">
+          <div>
+            <p>Review score</p>
+            <div class="score-line"><strong id="score">0</strong><span>pts</span></div>
+          </div>
+          <span class="signal neutral" id="assessment">Standby</span>
+        </div>
+        <dl class="signal-list">
+          <div><dt>People in frame</dt><dd class="signal neutral" id="people">Waiting</dd></div>
+          <div><dt>Phone in frame</dt><dd class="signal neutral" id="phone">Waiting</dd></div>
+          <div><dt>Head direction</dt><dd class="signal neutral" id="head">Waiting</dd></div>
+          <div><dt>Mouth movement</dt><dd class="signal neutral" id="mouth">Waiting</dd></div>
+        </dl>
+        <p class="signal-note">Automated flags are prompts for human review.</p>
+      </section>
+      <section class="panel history" aria-labelledby="history-title">
+        <div class="section-header">
+          <h2 id="history-title">Session activity</h2>
+          <span class="mono threshold" id="flag-count">0 flags</span>
+        </div>
+        <p class="history-empty" id="log-empty">Session events and review flags will appear here.</p>
+        <ol id="events" class="events" aria-live="polite" aria-relevant="additions"></ol>
+      </section>
+    </div>
+    <footer>
+      <span>ProctorPulse</span>
+      <a href="https://github.com/SourodipC18/ProctorPulse" target="_blank" rel="noopener">Source on GitHub</a>
+    </footer>
+  </main>
+</body>
+</html>
