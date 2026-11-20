@@ -1,5 +1,6 @@
-const personId = 0;
-const phoneId = 67;
+import { laptopId, personId, phoneId } from './object-classes.js';
+
+const monitoredClasses = [personId, phoneId, laptopId];
 const minimumConfidence = 0.45;
 const modelUrl = '/models/yolo11n.onnx';
 const runtimes = {
@@ -108,13 +109,18 @@ function decode(output, geometry) {
   const count = dims[2];
   const candidates = [];
   for (let i = 0; i < count; i++) {
-    const person = data[4 * count + i];
-    const phone = data[(4 + phoneId) * count + i];
-    const confidence = Math.max(person, phone);
+    let confidence = -Infinity;
+    let classId;
+    for (const id of monitoredClasses) {
+      const score = data[(4 + id) * count + i];
+      if (score > confidence) {
+        confidence = score;
+        classId = id;
+      }
+    }
     if (confidence < minimumConfidence) continue;
 
     // Assign each proposal to its strongest COCO class.
-    const classId = person >= phone ? personId : phoneId;
     let strongerClass = false;
     for (let k = 0; k < 80; k++) {
       if (data[(4 + k) * count + i] > confidence) {

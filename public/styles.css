@@ -70,7 +70,9 @@ h2 {font-size:1.02rem; letter-spacing:-.017em;}
 .score-wrap p {color:var(--muted); font-size:.875rem;}
 .score-line {display:flex; gap:8px; align-items:baseline; margin-top:3px;}
 .score-line strong {font:650 3rem/1.05 var(--mono); letter-spacing:-.1em;}
-.score-line span {color:var(--muted); font: .85rem var(--mono);}
+.risk-summary {padding:0 19px 13px; color:var(--muted); font-size:.85rem;}
+.risk-summary meter {display:block; width:100%; height:10px; margin-bottom:8px;}
+.risk-summary strong {color:var(--text); font-family:var(--mono);}
 .signal-list {margin:0; padding:0 19px;}
 .signal-list > div {display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:51px; padding:9px 0; border-top:1px solid var(--edge);}
 dt {font-size:.94rem;}

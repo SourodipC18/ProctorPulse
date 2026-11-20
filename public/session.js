@@ -1,6 +1,7 @@
-import { alertThreshold, BehaviorTracker } from './behavior.js';
+import { BehaviorTracker, reviewThreshold } from './behavior.js';
 import { loadFaceEngine } from './face-engine.js';
 import { GazeTracker } from './gaze.js';
+import { laptopId, objectLabels, personId, phoneId } from './object-classes.js';
 
 const byId = (id) => document.getElementById(id);
 const video = byId('camera');
@@ -8,6 +9,10 @@ const overlay = byId('overlay');
 const context = overlay.getContext('2d');
 const startButton = byId('start');
 const downloadButton = byId('download');
+const riskMeter = byId('risk-meter');
+
+byId('risk-threshold').textContent = `Review at ${reviewThreshold}%`;
+riskMeter.high = reviewThreshold - 1;
 
 const faceInterval = 100;
 const objectInterval = 200;
@@ -15,6 +20,9 @@ const objectMaximumGap = 2200;
 const faceMaximumGap = 750;
 const gazeMaximumGap = 400;
 const warningResetGap = 2000;
+const tabAwayThreshold = 2000;
+const tabWarningDuration = 5000;
+const signalIds = ['people', 'phone', 'laptop', 'face-presence', 'head', 'gaze', 'mouth', 'exam-tab'];
 
 let session = null;
 let recording = null;
@@ -31,13 +39,26 @@ window.addEventListener('pagehide', () => {
 document.addEventListener('visibilitychange', () => {
   const current = session;
   if (!isActive(current)) return;
-  if (document.hidden) window.speechSynthesis?.cancel();
+  const now = performance.now();
+  if (document.hidden) {
+    current.tabHiddenAt = now;
+    current.tracker.clear('tab');
+    window.speechSynthesis?.cancel();
+  } else if (current.tabHiddenAt !== null) {
+    const awayFor = now - current.tabHiddenAt;
+    current.tabHiddenAt = null;
+    if (awayFor >= tabAwayThreshold) {
+      current.tabAwaySeconds = awayFor / 1000;
+      current.tracker.update('tab', { tabAway: true }, now, tabWarningDuration);
+    }
+  }
   current.tracker.clear('face');
+  current.tracker.clear('facePresence');
   current.tracker.clear('gaze');
   current.tracker.clear('objects');
   current.lastFace = null;
   current.lastObjects = null;
-  current.visibleSince = performance.now();
+  current.visibleSince = now;
   clearOverlay();
   render(current, current.visibleSince);
   log(current, document.hidden ? 'Monitoring paused while the tab is hidden' : 'Monitoring resumed');
@@ -55,6 +76,8 @@ async function startSession() {
     lastFaceAt: -Infinity,
     lastObjectRequest: -Infinity,
     flagCount: 0,
+    peakRisk: 0,
+    tabHiddenAt: null,
     activeFlags: new Set(),
     lastFlagSeen: new Map(),
   };
@@ -63,7 +86,9 @@ async function startSession() {
   byId('log-empty').hidden = false;
   byId('flag-count').textContent = '0 flags';
   byId('elapsed').textContent = '00:00';
-  byId('score').textContent = '0';
+  setRisk(0, 0);
+  byId('risk-label').textContent = 'Malpractice risk';
+  byId('peak-risk').hidden = false;
   setPhase('loading', 'Requesting camera');
   byId('camera-status').textContent = 'Waiting for camera permission';
   byId('empty-title').textContent = 'Waiting for camera access';
@@ -106,6 +131,7 @@ async function startSession() {
     current.startedAt = performance.now();
     current.visibleSince = current.startedAt;
     current.state = 'active';
+    if (document.hidden) current.tabHiddenAt = current.startedAt;
     recording = null;
     setPhase('active', 'Session active');
     startButton.textContent = 'End session';
@@ -171,6 +197,10 @@ function processFrame(current, now) {
             away: Boolean(observation.head && observation.head !== 'Center'),
             mouth: observation.mouthOpen === true,
           }, now, faceMaximumGap);
+          const objects = readRecentObjects(current, now);
+          current.tracker.update('facePresence', {
+            faceMissing: objects?.people === 1 && !observation.present,
+          }, now, faceMaximumGap);
         }
         if (!current.waitingForObjects && now - current.lastObjectRequest >= objectInterval) {
           void sendFrame(current, now);
@@ -211,12 +241,18 @@ async function sendFrame(current, timestamp) {
   }
 }
 
+function readRecentObjects(current, now) {
+  return current.lastObjects && now - current.lastObjects.time <= objectMaximumGap ? current.lastObjects : null;
+}
+
 function acceptObjects(current, detections, time) {
-  const people = detections.filter(({ classId }) => classId === 0).length;
-  const phone = detections.some(({ classId }) => classId === 67);
-  current.lastObjects = { people, phone, time };
-  current.tracker.update('objects', { multiple: people > 1, absent: people === 0, phone },
+  const people = detections.filter(({ classId }) => classId === personId).length;
+  const phone = detections.some(({ classId }) => classId === phoneId);
+  const laptop = detections.some(({ classId }) => classId === laptopId);
+  current.lastObjects = { people, phone, laptop, time };
+  current.tracker.update('objects', { multiple: people > 1, absent: people === 0, phone, laptop },
     time, objectMaximumGap);
+  if (people !== 1) current.tracker.clear('facePresence');
   drawBoxes(detections);
   render(current, performance.now());
 }
@@ -234,9 +270,9 @@ function drawBoxes(detections) {
   context.font = `600 ${14 * unit}px system-ui`;
   context.textBaseline = 'middle';
   for (const box of detections) {
-    const isPerson = box.classId === 0;
+    const isPerson = box.classId === personId;
     const color = isPerson ? '#bbfc9e' : '#ffd091';
-    const label = isPerson ? 'Person' : 'Phone';
+    const label = objectLabels[box.classId];
     const x = width * (1 - box.right);
     const y = height * box.top;
     const labelHeight = 22 * unit;
@@ -257,14 +293,14 @@ function clearOverlay() {
 function render(current, now) {
   const paused = document.hidden;
   const face = current.lastFace && now - current.lastFace.time <= faceMaximumGap ? current.lastFace : null;
-  const objects = current.lastObjects && now - current.lastObjects.time <= objectMaximumGap ? current.lastObjects : null;
-  const { seconds, score, flags } = current.tracker.read(now);
-  const needsReview = score >= alertThreshold;
+  const objects = readRecentObjects(current, now);
+  const { seconds, risk, flags } = current.tracker.read(now);
+  const needsReview = risk >= reviewThreshold;
   const activeKeys = new Set(flags.map(({ key }) => key));
   const newFlags = flags.filter(({ key }) => !current.activeFlags.has(key));
   const newAnnouncements = newFlags.filter(({ key }) =>
     now - (current.lastFlagSeen.get(key) ?? -Infinity) >= warningResetGap);
-  for (const flag of newFlags) log(current, flag.reason, flag.points);
+  for (const flag of newFlags) log(current, flag.reason, flag.weight);
   for (const { key } of flags) current.lastFlagSeen.set(key, now);
   current.activeFlags = activeKeys;
 
@@ -278,7 +314,8 @@ function render(current, now) {
     setText(byId('alert-details'), flags.map(({ warning }) => warning).join(' '));
   }
   if (newAnnouncements.length) announceWarning(newAnnouncements);
-  setText(byId('score'), String(score));
+  current.peakRisk = Math.max(current.peakRisk, risk);
+  setRisk(risk, current.peakRisk);
   setText(byId('elapsed'), formatTime((now - current.startedAt) / 1000));
   setText(byId('camera-status'), paused ? 'Monitoring paused while the tab is hidden' :
     `Analyzing locally · ${current.provider}`);
@@ -291,6 +328,13 @@ function render(current, now) {
     objects ? objects.people === 1 ? 'good' : 'warn' : 'neutral');
   signal('phone', objects ? objects.phone ? withDuration('Visible', seconds.phone) : 'Clear' : waiting,
     objects ? objects.phone ? 'warn' : 'good' : 'neutral');
+  signal('laptop', objects ? objects.laptop ? withDuration('Visible', seconds.laptop) : 'Clear' : waiting,
+    objects ? objects.laptop ? 'warn' : 'good' : 'neutral');
+  const facePresence = face?.present ? 'Visible' : withDuration('Out of view', seconds.faceMissing);
+  signal('face-presence', face ? facePresence : waiting, face?.present ? 'good' : face ? 'warn' : 'neutral');
+  signal('exam-tab', paused ? 'Hidden' :
+    activeKeys.has('tabAway') ? withDuration('Left tab', current.tabAwaySeconds) : 'Visible',
+    paused || activeKeys.has('tabAway') ? 'warn' : 'good');
   signal('head', face?.head ? withDuration(face.head, seconds.away) : face ? 'Face missing' : waiting,
     face?.head ? face.head === 'Center' ? 'good' : 'warn' : 'neutral');
   const gazeLabel = face?.gaze === 'Calibrating' ? 'Look at screen' : face?.gaze ?? waiting;
@@ -299,6 +343,12 @@ function render(current, now) {
   signal('mouth', face?.mouthOpen === true ? withDuration('Open', seconds.mouth) :
     face?.mouthOpen === false ? 'Closed' : face ? 'Face missing' : waiting,
     face?.mouthOpen === true ? 'warn' : face?.mouthOpen === false ? 'good' : 'neutral');
+}
+
+function setRisk(risk, peak) {
+  setText(byId('risk'), `${risk}%`);
+  if (riskMeter.value !== risk) riskMeter.value = risk;
+  setText(byId('peak-risk').querySelector('strong'), `${peak}%`);
 }
 
 function announceWarning(flags) {
@@ -371,9 +421,14 @@ async function stopSession(current, error = '') {
   byId('empty-title').textContent = wasActive ? 'Session ended' : 'Camera is off';
   byId('empty-description').textContent = 'Start a session and allow camera access.';
   byId('camera-status').textContent = 'Camera idle';
-  for (const id of ['people', 'phone', 'head', 'gaze', 'mouth']) signal(id, 'Waiting', 'neutral');
+  for (const id of signalIds) signal(id, 'Waiting', 'neutral');
   signal('assessment', wasActive ? 'Session ended' : 'Standby', 'neutral');
-  if (wasActive) log(current, 'Session ended');
+  if (wasActive) {
+    byId('risk-label').textContent = 'Session peak risk';
+    byId('peak-risk').hidden = true;
+    setRisk(current.peakRisk, current.peakRisk);
+    log(current, 'Session ended');
+  }
   if (error) showError(error);
 
   if (current.recordingDone) {
@@ -440,7 +495,7 @@ function describeError(error) {
   }
 }
 
-function log(current, label, points) {
+function log(current, label, weight) {
   const timestamp = Math.max(0, (performance.now() - current.startedAt) / 1000);
   const item = document.createElement('li');
   const time = document.createElement('time');
@@ -449,13 +504,13 @@ function log(current, label, points) {
   const title = document.createElement('span');
   title.textContent = label;
   const status = document.createElement('span');
-  status.className = points ? 'flag mono' : 'neutral';
-  status.textContent = points ? `+${points} pts` : '';
+  status.className = weight ? 'flag mono' : 'neutral';
+  status.textContent = weight ? `${weight}% weight` : '';
   item.append(time, title, status);
   byId('log-empty').hidden = true;
   byId('events').prepend(item);
   if (byId('events').childElementCount > 150) byId('events').lastElementChild.remove();
-  if (points) {
+  if (weight) {
     current.flagCount++;
     setText(byId('flag-count'), `${current.flagCount} ${current.flagCount === 1 ? 'flag' : 'flags'}`);
   }

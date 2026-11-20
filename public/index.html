@@ -54,23 +54,30 @@
       <section class="panel signals" aria-labelledby="signals-title">
         <div class="section-header">
           <h2 id="signals-title">Live signals</h2>
-          <span class="mono threshold">Review at 3 pts</span>
+          <span class="mono threshold" id="risk-threshold">Review at 60%</span>
         </div>
         <div class="score-wrap">
           <div>
-            <p>Review score</p>
-            <div class="score-line"><strong id="score">0</strong><span>pts</span></div>
+            <p id="risk-label">Malpractice risk</p>
+            <div class="score-line"><strong id="risk">0%</strong></div>
           </div>
           <span class="signal neutral" id="assessment">Standby</span>
+        </div>
+        <div class="risk-summary">
+          <meter id="risk-meter" aria-labelledby="risk-label" min="0" max="100" low="0" high="59" optimum="0" value="0"></meter>
+          <p id="peak-risk">Session peak <strong>0%</strong></p>
         </div>
         <dl class="signal-list">
           <div><dt>People in frame</dt><dd class="signal neutral" id="people">Waiting</dd></div>
           <div><dt>Phone in frame</dt><dd class="signal neutral" id="phone">Waiting</dd></div>
+          <div><dt>Laptop in frame</dt><dd class="signal neutral" id="laptop">Waiting</dd></div>
+          <div><dt>Face in view</dt><dd class="signal neutral" id="face-presence">Waiting</dd></div>
           <div><dt>Head direction</dt><dd class="signal neutral" id="head">Waiting</dd></div>
           <div><dt>Eye gaze</dt><dd class="signal neutral" id="gaze">Waiting</dd></div>
           <div><dt>Mouth movement</dt><dd class="signal neutral" id="mouth">Waiting</dd></div>
+          <div><dt>Exam tab</dt><dd class="signal neutral" id="exam-tab">Waiting</dd></div>
         </dl>
-        <p class="signal-note">Automated flags are prompts for human review.</p>
+        <p class="signal-note">The percentage combines active flags. Use it as a guide for human review.</p>
       </section>
       <section class="panel history" aria-labelledby="history-title">
         <div class="section-header">

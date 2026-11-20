@@ -28,6 +28,7 @@ async function initialize() {
     const landmarks = detector.detectForVideo(video, timestamp).faceLandmarks[0];
     return {
       ...readFace(landmarks),
+      present: Boolean(landmarks),
       gaze: measureGaze(landmarks, video.videoHeight / video.videoWidth),
     };
   };
