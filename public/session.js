@@ -1,5 +1,6 @@
 import { alertThreshold, BehaviorTracker } from './behavior.js';
 import { loadFaceEngine } from './face-engine.js';
+import { GazeTracker } from './gaze.js';
 
 const byId = (id) => document.getElementById(id);
 const video = byId('camera');
@@ -12,6 +13,7 @@ const faceInterval = 100;
 const objectInterval = 200;
 const objectMaximumGap = 2200;
 const faceMaximumGap = 750;
+const gazeMaximumGap = 400;
 const warningResetGap = 2000;
 
 let session = null;
@@ -31,6 +33,7 @@ document.addEventListener('visibilitychange', () => {
   if (!isActive(current)) return;
   if (document.hidden) window.speechSynthesis?.cancel();
   current.tracker.clear('face');
+  current.tracker.clear('gaze');
   current.tracker.clear('objects');
   current.lastFace = null;
   current.lastObjects = null;
@@ -46,6 +49,7 @@ async function startSession() {
     state: 'starting',
     startedAt: performance.now(),
     tracker: new BehaviorTracker(),
+    gaze: new GazeTracker(),
     visibleSince: performance.now(),
     lastVideoTime: -1,
     lastFaceAt: -Infinity,
@@ -92,7 +96,7 @@ async function startSession() {
     overlay.hidden = false;
     byId('empty').hidden = true;
     setPhase('loading', 'Loading detectors');
-    byId('camera-status').textContent = 'Loading face and object models';
+    byId('camera-status').textContent = 'Loading models. Look at the screen to calibrate eye gaze.';
     const [face, provider] = await deadline(Promise.all([loadFaceEngine(), loadObjectEngine(current)]),
       90_000, 'Model loading timed out. Check your connection and try again.');
     if (session !== current || current.state !== 'starting') return;
@@ -155,7 +159,14 @@ function processFrame(current, now) {
         if (now - current.lastFaceAt >= faceInterval) {
           current.lastFaceAt = now;
           const observation = current.face(video, now);
-          current.lastFace = { ...observation, time: now };
+          const gaze = current.gaze.read(observation.gaze, observation.head === 'Center');
+          current.lastFace = { ...observation, gaze, time: now };
+          if (!observation.head || observation.head !== 'Center') {
+            current.tracker.clear('gaze');
+          } else if (gaze === 'Down' || gaze === 'Forward') {
+            // Short blinks leave the timer intact. A longer gap breaks continuity.
+            current.tracker.update('gaze', { down: gaze === 'Down' }, now, gazeMaximumGap);
+          }
           current.tracker.update('face', {
             away: Boolean(observation.head && observation.head !== 'Center'),
             mouth: observation.mouthOpen === true,
@@ -258,7 +269,7 @@ function render(current, now) {
   current.activeFlags = activeKeys;
 
   const alertBox = byId('alert');
-  const possibleCheating = flags.some(({ key }) => key === 'phone' || key === 'multiple');
+  const possibleCheating = flags.some((flag) => flag.possibleCheating);
   const title = possibleCheating ? 'Exam warning: Possible cheating detected' : 'Exam warning';
   alertBox.classList.toggle('review', needsReview);
   alertBox.hidden = flags.length === 0;
@@ -282,6 +293,9 @@ function render(current, now) {
     objects ? objects.phone ? 'warn' : 'good' : 'neutral');
   signal('head', face?.head ? withDuration(face.head, seconds.away) : face ? 'Face missing' : waiting,
     face?.head ? face.head === 'Center' ? 'good' : 'warn' : 'neutral');
+  const gazeLabel = face?.gaze === 'Calibrating' ? 'Look at screen' : face?.gaze ?? waiting;
+  signal('gaze', face?.gaze === 'Down' ? withDuration(gazeLabel, seconds.down) : gazeLabel,
+    face?.gaze === 'Down' ? 'warn' : face?.gaze === 'Forward' ? 'good' : 'neutral');
   signal('mouth', face?.mouthOpen === true ? withDuration('Open', seconds.mouth) :
     face?.mouthOpen === false ? 'Closed' : face ? 'Face missing' : waiting,
     face?.mouthOpen === true ? 'warn' : face?.mouthOpen === false ? 'good' : 'neutral');
@@ -290,7 +304,7 @@ function render(current, now) {
 function announceWarning(flags) {
   const speech = window.speechSynthesis;
   if (!speech || typeof SpeechSynthesisUtterance !== 'function') return;
-  const possibleCheating = flags.some(({ key }) => key === 'phone' || key === 'multiple');
+  const possibleCheating = flags.some((flag) => flag.possibleCheating);
   const prefix = possibleCheating ? 'Exam warning. Possible cheating detected.' : 'Exam warning.';
   const utterance = new SpeechSynthesisUtterance(`${prefix} ${flags.map(({ warning }) => warning).join(' ')}`);
   utterance.lang = 'en-US';
@@ -357,7 +371,7 @@ async function stopSession(current, error = '') {
   byId('empty-title').textContent = wasActive ? 'Session ended' : 'Camera is off';
   byId('empty-description').textContent = 'Start a session and allow camera access.';
   byId('camera-status').textContent = 'Camera idle';
-  for (const id of ['people', 'phone', 'head', 'mouth']) signal(id, 'Waiting', 'neutral');
+  for (const id of ['people', 'phone', 'head', 'gaze', 'mouth']) signal(id, 'Waiting', 'neutral');
   signal('assessment', wasActive ? 'Session ended' : 'Standby', 'neutral');
   if (wasActive) log(current, 'Session ended');
   if (error) showError(error);

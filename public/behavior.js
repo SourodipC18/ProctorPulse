@@ -1,12 +1,14 @@
 export const alertThreshold = 3;
 
 export const rules = [
-  { key: 'multiple', reason: 'Multiple people detected', duration: 0, points: 3,
+  { key: 'multiple', reason: 'Multiple people detected', duration: 0, points: 3, possibleCheating: true,
     warning: 'Multiple people detected. Make sure only you are in the camera frame.' },
   { key: 'absent', reason: 'No person detected', duration: 0, points: 3,
     warning: 'No person detected. Please return to the camera frame.' },
-  { key: 'phone', reason: 'Phone visible for more than 3 seconds', duration: 3000, points: 3,
+  { key: 'phone', reason: 'Phone detected', duration: 0, points: 3, possibleCheating: true,
     warning: 'Phone detected. Please put your phone away.' },
+  { key: 'down', reason: 'Downward gaze for more than 3 seconds', duration: 3000, points: 3, possibleCheating: true,
+    warning: 'You appear to be looking down. Please look back at the screen.' },
   { key: 'away', reason: 'Head turned for more than 5 seconds', duration: 5000, points: 1,
     warning: 'You appear to be looking away. Please face the screen.' },
   { key: 'mouth', reason: 'Mouth open for more than 4 seconds', duration: 4000, points: 1,

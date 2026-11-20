@@ -1,4 +1,5 @@
 import { readFace } from './behavior.js';
+import { measureGaze } from './gaze.js';
 
 let landmarkerPromise;
 
@@ -23,5 +24,11 @@ async function initialize() {
     runningMode: 'VIDEO',
     numFaces: 1,
   });
-  return (video, timestamp) => readFace(detector.detectForVideo(video, timestamp).faceLandmarks[0]);
+  return (video, timestamp) => {
+    const landmarks = detector.detectForVideo(video, timestamp).faceLandmarks[0];
+    return {
+      ...readFace(landmarks),
+      gaze: measureGaze(landmarks, video.videoHeight / video.videoWidth),
+    };
+  };
 }
