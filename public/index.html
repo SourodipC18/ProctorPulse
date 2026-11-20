@@ -29,7 +29,10 @@
       </div>
     </div>
     <div id="error" class="message error" role="alert" hidden></div>
-    <div id="alert" class="message warning" role="alert" hidden></div>
+    <div id="alert" class="message warning" role="alert" aria-atomic="true" hidden>
+      <strong id="alert-title"></strong>
+      <p id="alert-details"></p>
+    </div>
     <div class="workspace">
       <section class="panel feed-panel" aria-labelledby="feed-title">
         <div class="section-header">
@@ -51,7 +54,7 @@
       <section class="panel signals" aria-labelledby="signals-title">
         <div class="section-header">
           <h2 id="signals-title">Live signals</h2>
-          <span class="mono threshold">Alert at 3 pts</span>
+          <span class="mono threshold">Review at 3 pts</span>
         </div>
         <div class="score-wrap">
           <div>

@@ -89,6 +89,8 @@ dd {margin:0;}
 .events .neutral {color:var(--muted);}
 .message {border:1px solid; padding:13px 16px; margin-bottom:14px; border-radius:8px; line-height:1.45;}
 .message.warning {background:#2d231a; color:var(--warn); border-color:#735637;}
+.message.warning strong {display:block; margin-bottom:3px;}
+.message.warning.review {border-color:#c8975b; border-inline-start-width:5px;}
 .message.error {background:#301f22; color:var(--danger); border-color:#78535a;}
 footer {display:flex; justify-content:space-between; gap:12px; margin:26px 0 30px; color:var(--muted); font-size:.88rem;}
 footer a:hover {color:var(--text);}

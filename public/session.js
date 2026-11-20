@@ -12,6 +12,7 @@ const faceInterval = 100;
 const objectInterval = 200;
 const objectMaximumGap = 2200;
 const faceMaximumGap = 750;
+const warningResetGap = 2000;
 
 let session = null;
 let recording = null;
@@ -28,6 +29,7 @@ window.addEventListener('pagehide', () => {
 document.addEventListener('visibilitychange', () => {
   const current = session;
   if (!isActive(current)) return;
+  if (document.hidden) window.speechSynthesis?.cancel();
   current.tracker.clear('face');
   current.tracker.clear('objects');
   current.lastFace = null;
@@ -50,6 +52,7 @@ async function startSession() {
     lastObjectRequest: -Infinity,
     flagCount: 0,
     activeFlags: new Set(),
+    lastFlagSeen: new Map(),
   };
   session = current;
   byId('events').replaceChildren();
@@ -245,23 +248,33 @@ function render(current, now) {
   const face = current.lastFace && now - current.lastFace.time <= faceMaximumGap ? current.lastFace : null;
   const objects = current.lastObjects && now - current.lastObjects.time <= objectMaximumGap ? current.lastObjects : null;
   const { seconds, score, flags } = current.tracker.read(now);
-  const alert = score >= alertThreshold;
+  const needsReview = score >= alertThreshold;
   const activeKeys = new Set(flags.map(({ key }) => key));
-  for (const flag of flags) {
-    if (!current.activeFlags.has(flag.key)) log(current, flag.reason, flag.points);
-  }
+  const newFlags = flags.filter(({ key }) => !current.activeFlags.has(key));
+  const newAnnouncements = newFlags.filter(({ key }) =>
+    now - (current.lastFlagSeen.get(key) ?? -Infinity) >= warningResetGap);
+  for (const flag of newFlags) log(current, flag.reason, flag.points);
+  for (const { key } of flags) current.lastFlagSeen.set(key, now);
   current.activeFlags = activeKeys;
 
   const alertBox = byId('alert');
-  alertBox.hidden = !alert;
-  if (alert) setText(alertBox, `Review flagged · ${flags.map(({ reason }) => reason).join(' · ')}`);
+  const possibleCheating = flags.some(({ key }) => key === 'phone' || key === 'multiple');
+  const title = possibleCheating ? 'Exam warning: Possible cheating detected' : 'Exam warning';
+  alertBox.classList.toggle('review', needsReview);
+  alertBox.hidden = flags.length === 0;
+  if (flags.length) {
+    setText(byId('alert-title'), title);
+    setText(byId('alert-details'), flags.map(({ warning }) => warning).join(' '));
+  }
+  if (newAnnouncements.length) announceWarning(newAnnouncements);
   setText(byId('score'), String(score));
   setText(byId('elapsed'), formatTime((now - current.startedAt) / 1000));
   setText(byId('camera-status'), paused ? 'Monitoring paused while the tab is hidden' :
     `Analyzing locally · ${current.provider}`);
   const ready = face && objects;
-  signal('assessment', paused ? 'Paused' : alert ? 'Review flagged' : ready ? 'Monitoring' : 'Sampling',
-    alert ? 'warn' : ready && !paused ? 'good' : 'neutral');
+  signal('assessment', paused ? 'Paused' : needsReview ? 'Review flagged' : flags.length ? 'Warning' :
+    ready ? 'Monitoring' : 'Sampling',
+    flags.length ? 'warn' : ready && !paused ? 'good' : 'neutral');
   const waiting = paused ? 'Paused' : 'Sampling';
   signal('people', objects ? String(objects.people) : waiting,
     objects ? objects.people === 1 ? 'good' : 'warn' : 'neutral');
@@ -272,6 +285,18 @@ function render(current, now) {
   signal('mouth', face?.mouthOpen === true ? withDuration('Open', seconds.mouth) :
     face?.mouthOpen === false ? 'Closed' : face ? 'Face missing' : waiting,
     face?.mouthOpen === true ? 'warn' : face?.mouthOpen === false ? 'good' : 'neutral');
+}
+
+function announceWarning(flags) {
+  const speech = window.speechSynthesis;
+  if (!speech || typeof SpeechSynthesisUtterance !== 'function') return;
+  const possibleCheating = flags.some(({ key }) => key === 'phone' || key === 'multiple');
+  const prefix = possibleCheating ? 'Exam warning. Possible cheating detected.' : 'Exam warning.';
+  const utterance = new SpeechSynthesisUtterance(`${prefix} ${flags.map(({ warning }) => warning).join(' ')}`);
+  utterance.lang = 'en-US';
+  const localVoice = speech.getVoices().find((voice) => voice.localService && voice.lang.startsWith('en'));
+  if (localVoice) utterance.voice = localVoice;
+  speech.speak(utterance);
 }
 
 function startRecording(current) {
@@ -314,6 +339,7 @@ async function stopSession(current, error = '') {
   if (session !== current || current.state === 'stopping') return;
   const wasActive = isActive(current);
   current.state = 'stopping';
+  window.speechSynthesis?.cancel();
   startButton.disabled = true;
   startButton.textContent = 'Ending…';
   current.cancelWorkerLoad?.();

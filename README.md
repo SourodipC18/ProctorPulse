@@ -24,7 +24,7 @@ Open http://localhost:8000, select **Start session**, and allow camera access. W
 | Head turned | Turned left or right for more than 5 seconds | 1 |
 | Mouth open | Mouth appears open for more than 4 seconds | 1 |
 
-The total is the sum of currently active signals. A score of 3 or more displays a review alert. The session activity list records each signal when it first meets its rule and again if it later clears and reappears. Head direction approximates head pose, and mouth opening is only a visual proxy for possible talking. Alerts need human review.
+The total is the sum of currently active signals. Each signal displays an exam warning with the detected behavior and a suggested action. If browser speech is available, the app announces new warnings once per incident. A score of 3 or more flags the session for review while the signals are active. The activity list records each signal when it first meets its rule and again if it later clears and reappears. Head direction approximates head pose, and mouth opening is only a visual proxy for possible talking. Alerts need human review.
 
 MediaPipe estimates face landmarks. Ultralytics YOLO11n runs in a browser worker through ONNX Runtime Web, preferring WebGPU and falling back to WebAssembly. Object inference samples the newest available frames without building a backlog. Processing cadence depends on hardware, lighting, and browser support. Keep the session tab visible while monitoring. Desktop Chrome or Edge is the starting point for use.
 
