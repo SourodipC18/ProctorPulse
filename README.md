@@ -20,7 +20,7 @@ Open http://localhost:8000, select **Start session**, and allow camera access. W
 | --- | --- | ---: |
 | Multiple people | At least two people detected in the frame | 60% |
 | Nobody present | No people detected in the frame | 60% |
-| Phone | Detected in the frame | 60% |
+| Phone | Detected in the frame | 100% |
 | Downward gaze | Looking down for more than 3 seconds | 60% |
 | Exam tab left | Tab was hidden for at least 2 seconds. Flags on return and stays active for 5 seconds. | 60% |
 | Face out of view | One person is in frame but their face is missing for more than 3 seconds | 40% |
@@ -28,7 +28,9 @@ Open http://localhost:8000, select **Start session**, and allow camera access. W
 | Head turned | Turned left or right for more than 5 seconds | 20% |
 | Mouth open | Mouth appears open for more than 4 seconds | 20% |
 
-The risk percentage adds the weights of the active flags and caps the result at 100%. The dashboard retains the session's highest reading after the session ends. A reading of 60% or more flags the activity for review. The percentage reflects the configured signals and needs human interpretation.
+The risk percentage adds the weights of the active flags and caps the result at 100%. A phone detection alone gives 100%. The dashboard retains the session's highest reading after the session ends. A reading of 60% or more flags the activity for review. The percentage reflects the configured signals and needs human interpretation.
+
+**Reset percentage** clears the live reading and session peak. Alerts and activity history remain visible. An active flag at the time of reset contributes to the percentage again after it clears and reappears.
 
 Each signal displays an exam warning with the detected behavior and a suggested action. If browser speech is available, the app announces new warnings once per incident. The activity list records each new flag. Head direction approximates head pose, and mouth opening is a visual proxy for possible talking. The tab signal uses the browser's visibility state, which can also change when a window is minimized.
 

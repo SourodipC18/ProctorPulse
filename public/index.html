@@ -65,7 +65,10 @@
         </div>
         <div class="risk-summary">
           <meter id="risk-meter" aria-labelledby="risk-label" min="0" max="100" low="0" high="59" optimum="0" value="0"></meter>
-          <p id="peak-risk">Session peak <strong>0%</strong></p>
+          <div class="risk-actions">
+            <p id="peak-risk">Session peak <strong>0%</strong></p>
+            <button class="secondary risk-reset" id="reset-risk" type="button" disabled>Reset percentage</button>
+          </div>
         </div>
         <dl class="signal-list">
           <div><dt>People in frame</dt><dd class="signal neutral" id="people">Waiting</dd></div>
@@ -77,7 +80,7 @@
           <div><dt>Mouth movement</dt><dd class="signal neutral" id="mouth">Waiting</dd></div>
           <div><dt>Exam tab</dt><dd class="signal neutral" id="exam-tab">Waiting</dd></div>
         </dl>
-        <p class="signal-note">The percentage combines active flags. Use it as a guide for human review.</p>
+        <p class="signal-note">Active flags contribute to the percentage for human review.</p>
       </section>
       <section class="panel history" aria-labelledby="history-title">
         <div class="section-header">

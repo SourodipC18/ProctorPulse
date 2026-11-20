@@ -5,7 +5,7 @@ export const rules = [
     warning: 'Multiple people detected. Make sure only you are in the camera frame.' },
   { key: 'absent', reason: 'No person detected', duration: 0, weight: 60,
     warning: 'No person detected. Please return to the camera frame.' },
-  { key: 'phone', reason: 'Phone detected', duration: 0, weight: 60, possibleCheating: true,
+  { key: 'phone', reason: 'Phone detected', duration: 0, weight: 100, possibleCheating: true,
     warning: 'Phone detected. Please put your phone away.' },
   { key: 'down', reason: 'Downward gaze for more than 3 seconds', duration: 3000, weight: 60, possibleCheating: true,
     warning: 'You appear to be looking down. Please look back at the screen.' },
@@ -39,12 +39,15 @@ export function readFace(landmarks) {
 export class BehaviorTracker {
   constructor() {
     this.states = new Map();
+    this.resetFlags = new Set();
   }
 
   update(group, observations, time, maximumGap) {
     for (const [key, detected] of Object.entries(observations)) {
       const prior = this.states.get(key);
-      const since = detected && prior && time - prior.last <= maximumGap ? prior.since : time;
+      const continuous = detected && prior && time - prior.last <= maximumGap;
+      const since = continuous ? prior.since : time;
+      if (!continuous) this.resetFlags.delete(key);
       if (detected) this.states.set(key, { since, last: time, maximumGap, group });
       else this.states.delete(key);
     }
@@ -52,8 +55,15 @@ export class BehaviorTracker {
 
   clear(group) {
     for (const [key, state] of this.states) {
-      if (state.group === group) this.states.delete(key);
+      if (state.group === group) {
+        this.states.delete(key);
+        this.resetFlags.delete(key);
+      }
     }
+  }
+
+  resetRisk(now) {
+    this.resetFlags = new Set(this.read(now).flags.map(({ key }) => key));
   }
 
   read(now) {
@@ -66,7 +76,8 @@ export class BehaviorTracker {
       seconds[rule.key] = duration / 1000;
       if (rule.duration === 0 || duration > rule.duration) flags.push(rule);
     }
-    const risk = Math.min(100, flags.reduce((total, flag) => total + flag.weight, 0));
+    const risk = Math.min(100, flags.reduce((total, flag) =>
+      total + (this.resetFlags.has(flag.key) ? 0 : flag.weight), 0));
     return { seconds, flags, risk };
   }
 }

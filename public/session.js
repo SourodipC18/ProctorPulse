@@ -10,6 +10,7 @@ const context = overlay.getContext('2d');
 const startButton = byId('start');
 const downloadButton = byId('download');
 const riskMeter = byId('risk-meter');
+const riskResetButton = byId('reset-risk');
 
 byId('risk-threshold').textContent = `Review at ${reviewThreshold}%`;
 riskMeter.high = reviewThreshold - 1;
@@ -32,6 +33,7 @@ startButton.addEventListener('click', () => {
   else void startSession();
 });
 downloadButton.addEventListener('click', downloadRecording);
+riskResetButton.addEventListener('click', resetRisk);
 window.addEventListener('pagehide', () => {
   if (session) void stopSession(session);
 });
@@ -349,6 +351,20 @@ function setRisk(risk, peak) {
   setText(byId('risk'), `${risk}%`);
   if (riskMeter.value !== risk) riskMeter.value = risk;
   setText(byId('peak-risk').querySelector('strong'), `${peak}%`);
+  riskResetButton.disabled = risk === 0 && peak === 0;
+}
+
+function resetRisk() {
+  const current = session;
+  if (!isActive(current)) {
+    setRisk(0, 0);
+    return;
+  }
+  const now = performance.now();
+  current.tracker.resetRisk(now);
+  current.peakRisk = 0;
+  render(current, now);
+  log(current, 'Malpractice percentage reset');
 }
 
 function announceWarning(flags) {
